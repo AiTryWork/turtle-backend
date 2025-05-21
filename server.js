@@ -42,10 +42,16 @@ app.post('/check-link', async (req, res) => {
     });
 
     if (!scanResponse.ok) {
-      const errorText = await scanResponse.text();
-      console.error('❌ Scan API failed:', errorText);
-      return res.json({ verdict: 'Warning: Could not start scan (API error)' });
-    }
+  const errorData = await scanResponse.json();
+  console.log('Scan API error:', errorData.message);
+  
+  if (errorData.message && errorData.message.includes('resolve')) {
+    return res.json({ verdict: 'Error: This domain does not exist or could not be resolved.' });
+  }
+
+  return res.json({ verdict: 'Warning: Could not start scan (API error)' });
+}
+
 
     const scanData = await scanResponse.json();
     const uuid = scanData.uuid;
