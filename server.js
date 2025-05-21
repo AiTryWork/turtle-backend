@@ -1,4 +1,3 @@
-// backend/server.js
 const express = require('express');
 const fetch = require('node-fetch');
 const dotenv = require('dotenv');
@@ -12,85 +11,76 @@ app.use(cors());
 app.use(express.json());
 
 app.post('/check-link', async (req, res) => {
-  let { url } = req.body;
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'No URL provided' });
 
-  if (!url) {
-    return res.status(400).json({ verdict: 'Warning: No URL provided' });
-  }
-
-  try {
-    // Normalize URL
-    url = url.trim();
-    if (!/^https?:\/\//i.test(url)) {
-      url = 'http://' + url;
-    }
-    url = new URL(url).href;
-  } catch (err) {
-    return res.json({ verdict: 'Warning: Invalid URL format' });
-  }
+  console.log(`🔍 Scanning URL: ${url}`);
 
   try {
-    // STEP 1: Submit scan to urlscan.io
+    // Step 1: Send scan request to urlscan.io
     const scanResponse = await fetch('https://urlscan.io/api/v1/scan/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'API-Key': process.env.URLSCAN_API_KEY,
-        'Referer': 'https://yourdomain.com' // <-- Add your domain or dummy
       },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url }),
     });
 
+    // Step 2: Handle scan request errors (e.g., DNS issues)
     if (!scanResponse.ok) {
-  const errorData = await scanResponse.json();
-  console.log('Scan API error:', errorData.message);
-  
-  if (errorData.message && errorData.message.includes('resolve')) {
-    return res.json({ verdict: 'Error: This domain does not exist or could not be resolved.' });
-  }
+      const errorData = await scanResponse.json();
+      console.log('❌ Scan request failed:', errorData.message);
 
-  return res.json({ verdict: 'Warning: Could not start scan (API error)' });
-}
-
-
-    const scanData = await scanResponse.json();
-    const uuid = scanData.uuid;
-    console.log(`✅ Scan submitted for ${url}, UUID: ${uuid}`);
-
-    // STEP 2: Poll for result
-    let resultData = null;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const resultResp = await fetch(`https://urlscan.io/api/v1/result/${uuid}/`);
-      if (resultResp.ok) {
-        const json = await resultResp.json();
-        if (json.verdicts && json.verdicts.overall) {
-          resultData = json;
-          break;
-        }
+      if (errorData.message && errorData.message.toLowerCase().includes('resolve')) {
+        return res.json({ verdict: '❗ Error: This domain does not exist or could not be resolved.' });
       }
-      console.log(`⏳ Waiting for scan result... (${attempt + 1}/10)`);
-      await new Promise(r => setTimeout(r, 2000));
+
+      return res.json({ verdict: '⚠️ Warning: Could not start scan (API error)' });
     }
 
-    if (!resultData) {
-      console.log('❌ Result polling failed or scan not ready.');
-      return res.json({ verdict: 'Warning: Scan timed out or failed' });
+    const { uuid } = await scanResponse.json();
+    console.log(`✅ Scan started. UUID: ${uuid}`);
+
+    // Step 3: Poll result up to 5 times
+    let resultData;
+    let attempts = 0;
+
+    while (attempts < 5) {
+      const resultResponse = await fetch(`https://urlscan.io/api/v1/result/${uuid}/`);
+      if (!resultResponse.ok) {
+        console.log(`⏳ Waiting for result (attempt ${attempts + 1})...`);
+        attempts++;
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
+      }
+
+      resultData = await resultResponse.json();
+
+      if (resultData.verdicts) break;
+
+      attempts++;
+      await new Promise(r => setTimeout(r, 3000));
     }
 
-    // STEP 3: Verdict logic
-    const malicious = resultData.verdicts.overall.malicious;
-    if (malicious === true) {
-      return res.json({ verdict: 'Warning: This URL’s domain appears invalid and could be malicious' });
+    // Step 4: No verdicts found
+    if (!resultData || !resultData.verdicts) {
+      return res.json({ verdict: '⚠️ Warning: Could not retrieve scan result.' });
+    }
+
+    // Step 5: Check verdict score
+    const score = resultData.verdicts.overall.score;
+    if (score > 0) {
+      return res.json({ verdict: '⚠️ Warning: This URL appears malicious or suspicious.' });
     } else {
-      return res.json({ verdict: 'safe' });
+      return res.json({ verdict: '✅ The URL is SAFE to use.' });
     }
-
-  } catch (err) {
-    console.error('❌ Unexpected server error:', err.message);
-    return res.json({ verdict: 'Warning: Internal server error' });
+  } catch (error) {
+    console.error('🚨 Unexpected server error:', error.message);
+    return res.json({ verdict: '⚠️ Error: Something went wrong while scanning the link.' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`🚀 Server is running on port ${PORT}`);
 });
