@@ -5,7 +5,9 @@ const cors = require('cors');
 
 dotenv.config();
 const app = express();
-const PORT = 3000;
+
+// Use dynamic port provided by Render, fallback to 3000 for local dev
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
@@ -72,6 +74,7 @@ app.post('/check-link', async (req, res) => {
   }
 });
 
+// Listen on dynamic port
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`✅ Server is running on port ${PORT}`);
 });
