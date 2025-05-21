@@ -2,6 +2,7 @@ const express = require('express');
 const fetch = require('node-fetch');
 const dotenv = require('dotenv');
 const cors = require('cors');
+const { URL } = require('url');
 
 dotenv.config();
 const app = express();
@@ -10,14 +11,53 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Whitelist of safe domains (add more as you want)
+const SAFE_DOMAINS = [
+  'youtube.com',
+  'www.youtube.com',
+  'google.com',
+  'www.google.com',
+  'facebook.com',
+  'www.facebook.com',
+  'twitter.com',
+  'www.twitter.com',
+  'github.com',
+  'www.github.com',
+];
+
+function extractDomain(inputUrl) {
+  try {
+    const urlObj = new URL(inputUrl);
+    return urlObj.hostname.toLowerCase();
+  } catch {
+    // If inputUrl is just domain without protocol, add protocol to parse
+    try {
+      const urlObj = new URL('http://' + inputUrl);
+      return urlObj.hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+}
+
 app.post('/check-link', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'No URL provided' });
 
-  console.log(`🔍 Scanning URL: ${url}`);
+  const domain = extractDomain(url);
+  if (!domain) {
+    return res.json({ verdict: 'Warning : This URL might be Dangerous' });
+  }
 
+  console.log(`🔍 Scanning URL: ${url}, domain: ${domain}`);
+
+  // Check whitelist first
+  if (SAFE_DOMAINS.includes(domain)) {
+    return res.json({ verdict: 'This URL is Safe' });
+  }
+
+  // If domain not in whitelist, proceed with urlscan.io scan
   try {
-    // Step 1: Send scan request to urlscan.io
     const scanResponse = await fetch('https://urlscan.io/api/v1/scan/', {
       method: 'POST',
       headers: {
@@ -27,60 +67,48 @@ app.post('/check-link', async (req, res) => {
       body: JSON.stringify({ url }),
     });
 
-    // Step 2: Handle scan request errors (e.g., DNS issues)
     if (!scanResponse.ok) {
-      const errorData = await scanResponse.json();
-      console.log('❌ Scan request failed:', errorData.message);
-
-      if (errorData.message && errorData.message.toLowerCase().includes('resolve')) {
-        return res.json({ verdict: '❗ Error: This domain does not exist or could not be resolved.' });
-      }
-
-      return res.json({ verdict: '⚠️ Warning: Could not start scan (API error)' });
+      console.log('❌ Scan request failed with status:', scanResponse.status);
+      return res.json({ verdict: 'Warning : This URL might be Dangerous' });
     }
 
     const { uuid } = await scanResponse.json();
     console.log(`✅ Scan started. UUID: ${uuid}`);
 
-    // Step 3: Poll result up to 5 times
-    let resultData;
     let attempts = 0;
+    let resultData;
 
     while (attempts < 5) {
       const resultResponse = await fetch(`https://urlscan.io/api/v1/result/${uuid}/`);
       if (!resultResponse.ok) {
-        console.log(`⏳ Waiting for result (attempt ${attempts + 1})...`);
         attempts++;
         await new Promise(r => setTimeout(r, 3000));
         continue;
       }
 
       resultData = await resultResponse.json();
-
       if (resultData.verdicts) break;
 
       attempts++;
       await new Promise(r => setTimeout(r, 3000));
     }
 
-    // Step 4: No verdicts found
     if (!resultData || !resultData.verdicts) {
-      return res.json({ verdict: '⚠️ Warning: Could not retrieve scan result.' });
+      return res.json({ verdict: 'Warning : This URL might be Dangerous' });
     }
 
-    // Step 5: Check verdict score
     const score = resultData.verdicts.overall.score;
     if (score > 0) {
-      return res.json({ verdict: '⚠️ Warning: This URL appears malicious or suspicious.' });
+      return res.json({ verdict: 'Warning : This URL might be Dangerous' });
     } else {
-      return res.json({ verdict: '✅ The URL is SAFE to use.' });
+      return res.json({ verdict: 'This URL is Safe' });
     }
   } catch (error) {
     console.error('🚨 Unexpected server error:', error.message);
-    return res.json({ verdict: '⚠️ Error: Something went wrong while scanning the link.' });
+    return res.json({ verdict: 'Warning : This URL might be Dangerous' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
