@@ -73,6 +73,10 @@ app.post('/check-link', async (req, res) => {
     return res.json({ verdict: 'Warning: This URL might be Dangerous' });
   }
 });
+app.get('/', (req, res) => {
+  res.send('✅ Turtle backend is live and responding!');
+});
+
 
 app.listen(PORT, () => {
   console.log(`✅ Server is running on port ${PORT}`);
